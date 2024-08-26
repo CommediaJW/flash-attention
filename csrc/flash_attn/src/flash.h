@@ -189,6 +189,16 @@ struct Flash_bwd_params : public Flash_fwd_params {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+struct Flash_kvclus_fwd_params : public Flash_fwd_params {
+    void *__restrict__ bias_ptr;
+    index_t bias_batch_stride;
+    index_t bias_head_stride;
+    index_t bias_qlen_stride;
+    index_t bias_klen_stride;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 template<typename T, int Headdim, bool Is_causal> void run_mha_fwd_(Flash_fwd_params &params, cudaStream_t stream);
 template<typename T, int Headdim, bool Is_causal> void run_mha_fwd_splitkv_dispatch(Flash_fwd_params &params, cudaStream_t stream);
 

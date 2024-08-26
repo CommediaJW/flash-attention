@@ -56,11 +56,11 @@ struct Flash_fwd_kernel_traits : public Base {
     using SmemCopyAtom = typename Base::SmemCopyAtom;
     using SmemCopyAtomTransposed = typename Base::SmemCopyAtomTransposed;
 
-    static constexpr bool Share_Q_K_smem = Share_Q_K_smem_;
-    static constexpr bool Is_Q_in_regs = Is_Q_in_regs_ || Share_Q_K_smem;
+    static constexpr bool Share_Q_K_smem = Share_Q_K_smem_; // False
+    static constexpr bool Is_Q_in_regs = Is_Q_in_regs_ || Share_Q_K_smem; // False
 
     // The number of threads.
-    static constexpr int kNWarps = kNWarps_;
+    static constexpr int kNWarps = kNWarps_; // 4
     static constexpr int kNThreads = kNWarps * 32;
 
     static constexpr int kBlockM = kBlockM_;
@@ -88,6 +88,10 @@ struct Flash_fwd_kernel_traits : public Base {
     using SmemLayoutKV = decltype(tile_to_shape(
         SmemLayoutAtomQ{},
         Shape<Int<kBlockN>, Int<kHeadDim>>{}));
+
+    using SmemLayoutBias = decltype(tile_to_shape(
+        SmemLayoutAtomQ{},
+        Shape<Int<kBlockM>, Int<kBlockN>>{}));
 
     // https://github.com/ColfaxResearch/cutlass-kernels/blob/a222587e6d59b93ba704853d3946fb686d8b8892/src/fmha/fmha_forward.cu#L434
     using SmemLayoutVtransposed = decltype(
