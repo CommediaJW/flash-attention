@@ -59,7 +59,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     CHECK_SHAPE(q, batch_size, seqlen_q, num_heads, head_size_og);
     CHECK_SHAPE(k, batch_size, seqlen_k, num_heads_k, head_size_og);
     CHECK_SHAPE(v, batch_size, seqlen_k, num_heads_k, head_size_og);
-    CHECK_SHAPE(bias, batch_size, num_heads_k, seqlen_q, seqlen_v);
+    CHECK_SHAPE(bias, batch_size, seqlen_q, num_heads_k, seqlen_v);
     */
 
     // Jiawei: Q in global mem. Q[bidb, :, :, :], shape=[q_len, #head, head_dim]
@@ -111,7 +111,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
                             make_stride(params.bias_head_stride, params.bias_qlen_stride, _1{}));
     // Jiawei: cluster_bias block in global mem. mBias[:, bibh_kv, :], then tile it into [kBlockM, kBlockN] blocks,
     //         and get the ones at crood [m_block, _]. Shape = [kBlockM, kBlockN, num_kv_blocks]
-    Tensor gB = local_tile(mB(bidh / params.h_h_k_ratio, _, _), Shape<Int<kBlockM>, Int<kBlockN>>{},
+    Tensor gB = local_tile(mB(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockM>, Int<kBlockN>>{},
                            make_coord(m_block, _));
     // Jiawei: cluster_bias block in shared memory. Int<kBlockN>, Int<kHeadDim>
     Tensor sB = make_tensor(sV.data() + size(sV), typename Kernel_traits::SmemLayoutBias{});
