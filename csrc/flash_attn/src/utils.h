@@ -188,7 +188,7 @@ template<bool A_in_regs=false, bool B_in_regs=false, bool C_in_regs=false,
          typename ThrCopyA, typename ThrCopyB, typename ThrCopyC>
 __forceinline__ __device__ void gemm_kvclus(
     Tensor0 &acc, Tensor1 &tCrA, Tensor2 &tCrB, Tensor3 &tCrC,
-    Tensor4 const& tCsA, Tensor5 const& tCsB, ensor6 const& tCsC, 
+    Tensor4 const& tCsA, Tensor5 const& tCsB, Tensor6 const& tCsC, 
     TiledMma tiled_mma, TiledCopyA smem_tiled_copy_A,
     TiledCopyB smem_tiled_copy_B, TiledCopyC smem_tiled_copy_C,
     ThrCopyA smem_thr_copy_A, ThrCopyB smem_thr_copy_B,
@@ -212,7 +212,7 @@ __forceinline__ __device__ void gemm_kvclus(
 
     if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, _0{}), tCrA_copy_view(_, _, _0{})); }
     if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, _0{}), tCrB_copy_view(_, _, _0{})); }
-    if (!C_in_regs) { cute::copy(smem_tiled_copy_C, tCsC(_, _, _), tCrC_copy_view(_, _, _)); }
+    if (!C_in_regs) { cute::copy(smem_tiled_copy_C, tCsC, tCrC_copy_view); }
 
     #pragma unroll
     for (int i = 0; i < size<2>(tCrA); ++i) {
@@ -222,7 +222,7 @@ __forceinline__ __device__ void gemm_kvclus(
             cute::gemm(tiled_mma, tCrA(_, _, i), tCrB(_, _, i), acc);
         }
         else {
-            cute::gemm(tiled_mma, acc, tCrA(_, _, i), tCrB(_, _, i), tCrC(_, _, _));
+            cute::gemm(tiled_mma, acc, tCrA(_, _, i), tCrB(_, _, i), tCrC);
         }
     }
 

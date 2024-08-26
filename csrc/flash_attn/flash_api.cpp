@@ -204,9 +204,9 @@ void set_kvclus_params_fprop(
     params.o_row_stride = out.stride(-3);
     params.o_head_stride = out.stride(-2);
     params.bias_ptr = bias.data_ptr();
-    params.bias_qlen_stride = data.stride(-3);
-    params.bias_head_stride = data.stride(-2);
-    params.bias_batch_stride = data.stride(0);
+    params.bias_qlen_stride = bias.stride(-3);
+    params.bias_head_stride = bias.stride(-2);
+    params.bias_batch_stride = bias.stride(0);
 
     if (cu_seqlens_q_d == nullptr) {
         params.q_batch_stride = q.stride(0);
@@ -1811,7 +1811,7 @@ mha_fwd_kvclus(
     CHECK_SHAPE(v, batch_size, seqlen_k, num_heads_k, head_size_og);
     CHECK_SHAPE(bias, batch_size, seqlen_q, num_heads_k, head_size_og);
 
-    at::Tensor q_padded, k_padded, v_padded;
+    at::Tensor q_padded, k_padded, v_padded, bias_padded;
     if (head_size_og % 8 != 0) {
         q_padded = torch::nn::functional::pad(q, torch::nn::functional::PadFuncOptions({0, 8 - head_size_og % 8}));
         k_padded = torch::nn::functional::pad(k, torch::nn::functional::PadFuncOptions({0, 8 - head_size_og % 8}));
@@ -1822,7 +1822,7 @@ mha_fwd_kvclus(
         q_padded = q;
         k_padded = k;
         v_padded = v;
-        bias_padded = biasl
+        bias_padded = bias;
     }
 
     at::Tensor out;

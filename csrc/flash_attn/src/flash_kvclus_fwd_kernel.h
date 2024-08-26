@@ -43,7 +43,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     constexpr int kHeadDim = Kernel_traits::kHeadDim; // Jiawei: head dim block size
     constexpr int kNWarps = Kernel_traits::kNWarps;
 
-    const KVClusBlockInfo</*Varlen=*/!Is_even_MN> binfo(params, bidb);
+    const BlockInfo</*Varlen=*/!Is_even_MN> binfo(params, bidb);
     if (m_block * kBlockM >= binfo.actual_seqlen_q) return;
 
     // Jiawei: the min KVblock ID that this threadblock will handle. For decoding, its 0
@@ -111,8 +111,8 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
                             make_stride(params.bias_head_stride, params.bias_qlen_stride, _1{}));
     // Jiawei: cluster_bias block in global mem. mBias[:, bibh_kv, :], then tile it into [kBlockM, kBlockN] blocks,
     //         and get the ones at crood [m_block, _]. Shape = [kBlockM, kBlockN, num_kv_blocks]
-    Tensor gB = local_tile(mB(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockM>, Int<kBlockN>>{},
-                           make_coord(m_block, _));
+    Tensor gB = local_tile(mB(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockN>, Int<kBlockN>>{},
+                           make_coord(m_block, _));  // (kBlockM, kBlockN, nblocksN)
     // Jiawei: cluster_bias block in shared memory. Int<kBlockN>, Int<kHeadDim>
     Tensor sB = make_tensor(sV.data() + size(sV), typename Kernel_traits::SmemLayoutBias{});
 

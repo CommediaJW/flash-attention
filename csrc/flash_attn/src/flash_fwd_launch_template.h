@@ -332,7 +332,11 @@ void run_mha_fwd_hdim256(Flash_fwd_params &params, cudaStream_t stream) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_FLASH_FORWARD_KERNEL(flash_kvclus_fwd_kernel, bool Is_dropout, bool Is_causal, bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Return_softmax) {
+#define DEFINE_FLASH_KVCLUS_FORWARD_KERNEL(kernelName, ...) \
+template<typename Kernel_traits, __VA_ARGS__> \
+__global__ void kernelName(KERNEL_PARAM_MODIFIER const Flash_kvclus_fwd_params params)
+
+DEFINE_FLASH_KVCLUS_FORWARD_KERNEL(flash_kvclus_fwd_kernel, bool Is_dropout, bool Is_causal, bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Return_softmax) {
     #if defined(ARCH_SUPPORTS_FLASH)
         static_assert(!(Is_causal && Is_local)); // Enforce constraints
         flash::compute_attn_kvclus<Kernel_traits, Is_dropout, Is_causal, Is_local, Has_alibi, Is_even_MN, Is_even_K, Is_softcap, Return_softmax>(params);
