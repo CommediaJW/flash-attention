@@ -135,7 +135,6 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     Tensor tSrQ  = thr_mma.partition_fragment_A(sQ);                          // (MMA, MMA_M, MMA_K)
     Tensor tSrK  = thr_mma.partition_fragment_B(sK);                          // (MMA, MMA_N, MMA_K)
     Tensor tOrVt = thr_mma.partition_fragment_B(sVtNoSwizzle);                // (MMA, MMA_K, MMA_N)
-    Tensor tSrB  = thr_mma.partition_fragment_C(sB);                          // (MMA, MMA_M, MMA_N)
 
     // Jiawei: ??? thread MMA block of O on *register*. (MMA, MMA_M, MMA_K)
     Tensor acc_o = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kHeadDim>>{});
@@ -153,7 +152,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     auto smem_thr_copy_V = smem_tiled_copy_V.get_thread_slice(tidx);
     Tensor tOsVt = smem_thr_copy_V.partition_S(sVt);
 
-    auto smem_tiled_copy_B = make_tiled_copy_C(typename Kernel_traits::SmemCopyAtom{}, tiled_mma);
+    auto smem_tiled_copy_B = make_tiled_copy_C(typename Kernel_traits::SmemCopyAtomAccm{}, tiled_mma);
     auto smem_thr_copy_B = smem_tiled_copy_B.get_thread_slice(tidx);
     Tensor tSsB = smem_thr_copy_B.partition_S(sB);
 
@@ -235,13 +234,9 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         cute::cp_async_fence();
 
         flash::gemm_kvclus</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-            acc_s, tSrQ, tSrK, tSrB, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
+            acc_s, tSrQ, tSrK, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
             smem_tiled_copy_B, smem_thr_copy_Q, smem_thr_copy_K, smem_thr_copy_B
         );
-        // flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-        //     acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
-        //     smem_thr_copy_Q, smem_thr_copy_K
-        // );
         if constexpr (Is_softcap){
             flash::apply_softcap(acc_s, params.softcap);
         }
@@ -288,7 +283,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         cute::cp_async_fence();
 
         flash::gemm_kvclus</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-            acc_s, tSrQ, tSrK, tSrB, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
+            acc_s, tSrQ, tSrK, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
             smem_tiled_copy_B, smem_thr_copy_Q, smem_thr_copy_K, smem_thr_copy_B
         );
         // flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(

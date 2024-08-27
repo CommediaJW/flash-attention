@@ -39,9 +39,11 @@ struct Flash_kernel_traits {
 #if defined(__CUDA_ARCH__) &&  __CUDA_ARCH__ >= 750
     using SmemCopyAtom = Copy_Atom<SM75_U32x4_LDSM_N, elem_type>;
     using SmemCopyAtomTransposed = Copy_Atom<SM75_U16x8_LDSM_T, elem_type>;
+    using SmemCopyAtomAccm = Copy_Atom<DefaultCopy, elem_type>;
 #else
     using SmemCopyAtom = Copy_Atom<DefaultCopy, elem_type>;
     using SmemCopyAtomTransposed = Copy_Atom<DefaultCopy, elem_type>;
+    using SmemCopyAtomAccm = Copy_Atom<DefaultCopy, elem_type>;
 #endif
 };
 
@@ -55,6 +57,7 @@ struct Flash_fwd_kernel_traits : public Base {
     static constexpr bool Has_cp_async = Base::Has_cp_async;
     using SmemCopyAtom = typename Base::SmemCopyAtom;
     using SmemCopyAtomTransposed = typename Base::SmemCopyAtomTransposed;
+    using SmemCopyAtomAccm = typename Base::SmemCopyAtomAccm;
 
     static constexpr bool Share_Q_K_smem = Share_Q_K_smem_; // False
     static constexpr bool Is_Q_in_regs = Is_Q_in_regs_ || Share_Q_K_smem; // False
@@ -92,8 +95,8 @@ struct Flash_fwd_kernel_traits : public Base {
 
     using SmemLayoutAtomBias = decltype(
         composition(Swizzle<kSwizzle, 3, 3>{},
-                    Layout<Shape<_8, Int<8>>,
-                           Stride<Int<8>, _1>>{}));
+                    Layout<Shape<_8, Int<32>>,
+                           Stride<Int<32>, _1>>{}));
     using SmemLayoutBias = decltype(tile_to_shape(
         SmemLayoutAtomBias{},
         Shape<Int<kBlockM>, Int<kBlockN>>{}));
