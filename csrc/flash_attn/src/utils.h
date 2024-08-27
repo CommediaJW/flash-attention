@@ -212,7 +212,7 @@ __forceinline__ __device__ void gemm_kvclus(
 
     if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, _0{}), tCrA_copy_view(_, _, _0{})); }
     if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, _0{}), tCrB_copy_view(_, _, _0{})); }
-    if (!C_in_regs) { cute::copy(smem_tiled_copy_C, tCsC, tCrC_copy_view); }
+    if (!C_in_regs) { cute::copy(smem_tiled_copy_C, tCsC(_, _, _), tCrC_copy_view(_, _, _)); }
 
     #pragma unroll
     for (int i = 0; i < size<2>(tCrA); ++i) {

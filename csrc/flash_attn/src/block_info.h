@@ -34,11 +34,6 @@ struct BlockInfo {
         return sum_s_k == -1 ? bidb * batch_stride + leftpad_k * row_stride : uint32_t(sum_s_k + leftpad_k) * row_stride;
     }
 
-    template <typename index_t>
-    __forceinline__ __device__ index_t bias_offset(const index_t batch_stride, const int bidb) const {
-        return bidb * batch_stride;
-    }
-
     const int sum_s_q;
     const int sum_s_k;
     const int actual_seqlen_q;

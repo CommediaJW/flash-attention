@@ -190,7 +190,7 @@ struct Flash_bwd_params : public Flash_fwd_params {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct Flash_kvclus_fwd_params : public Flash_fwd_params {
-    void *__restrict__ bias_ptr;
+    void * __restrict__ bias_ptr;
     index_t bias_batch_stride;
     index_t bias_head_stride;
     index_t bias_qlen_stride;

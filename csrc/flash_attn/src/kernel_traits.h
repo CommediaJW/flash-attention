@@ -81,6 +81,7 @@ struct Flash_fwd_kernel_traits : public Base {
                     // This has to be kBlockKSmem, using kHeadDim gives wrong results for d=128
                     Layout<Shape<_8, Int<kBlockKSmem>>,
                            Stride<Int<kBlockKSmem>, _1>>{}));
+
     using SmemLayoutQ = decltype(tile_to_shape(
         SmemLayoutAtomQ{},
         Shape<Int<kBlockM>, Int<kHeadDim>>{}));
@@ -89,8 +90,12 @@ struct Flash_fwd_kernel_traits : public Base {
         SmemLayoutAtomQ{},
         Shape<Int<kBlockN>, Int<kHeadDim>>{}));
 
+    using SmemLayoutAtomBias = decltype(
+        composition(Swizzle<kSwizzle, 3, 3>{},
+                    Layout<Shape<_8, Int<8>>,
+                           Stride<Int<8>, _1>>{}));
     using SmemLayoutBias = decltype(tile_to_shape(
-        SmemLayoutAtomQ{},
+        SmemLayoutAtomBias{},
         Shape<Int<kBlockM>, Int<kBlockN>>{}));
 
     // https://github.com/ColfaxResearch/cutlass-kernels/blob/a222587e6d59b93ba704853d3946fb686d8b8892/src/fmha/fmha_forward.cu#L434

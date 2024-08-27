@@ -106,20 +106,20 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     // TODO: need check
     // Jiawei: cluster_bias in global mem. bias[bidb, :, :, :]
     Tensor mB = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.bias_ptr)
-                                             + binfo.bias_offset(params.bias_batch_stride, bidb)),
-                            make_shape(params.h_k, binfo.actual_seqlen_q, binfo.actual_seqlen_k),
-                            make_stride(params.bias_head_stride, params.bias_qlen_stride, _1{}));
+                                             + bidb * params.bias_batch_stride),
+                            make_shape(binfo.actual_seqlen_q, params.h_k, binfo.actual_seqlen_k),
+                            make_stride(params.bias_qlen_stride, params.bias_head_stride, _1{}));
     // Jiawei: cluster_bias block in global mem. mBias[:, bibh_kv, :], then tile it into [kBlockM, kBlockN] blocks,
     //         and get the ones at crood [m_block, _]. Shape = [kBlockM, kBlockN, num_kv_blocks]
-    Tensor gB = local_tile(mB(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockN>, Int<kBlockN>>{},
+    Tensor gB = local_tile(mB(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockM>, Int<kBlockN>>{},
                            make_coord(m_block, _));  // (kBlockM, kBlockN, nblocksN)
-    // Jiawei: cluster_bias block in shared memory. Int<kBlockN>, Int<kHeadDim>
+    // Jiawei: cluster_bias block in shared memory. Int<kBlockM>, Int<kBlockN>
     Tensor sB = make_tensor(sV.data() + size(sV), typename Kernel_traits::SmemLayoutBias{});
 
     // TODO: Kernel_traits maybe need some modification to support cluster_bias
     typename Kernel_traits::GmemTiledCopyQKV gmem_tiled_copy_QKV;
     auto gmem_thr_copy_QKV = gmem_tiled_copy_QKV.get_thread_slice(tidx);
-    Tensor tQgQ = gmem_thr_copy_QKV.partition_S(gQ);  // (QCPY, QCPY_N, QCPY_K)
+    Tensor tQgQ = gmem_thr_copy_QKV.partition_S(gQ);  // (QCPY, QCPY_M, QCPY_K)
     Tensor tQsQ = gmem_thr_copy_QKV.partition_D(sQ);
     Tensor tKgK = gmem_thr_copy_QKV.partition_S(gK);  // (KCPY, KCPY_N, KCPY_K, nblocksN)
     Tensor tKsK = gmem_thr_copy_QKV.partition_D(sK);
@@ -172,7 +172,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     // Allocate predicate tensors for k
     Tensor tQpQ = make_tensor<bool>(make_shape(size<2>(tQsQ)));
     Tensor tKVpKV = make_tensor<bool>(make_shape(size<2>(tKsK)));
-    Tensor tBpB = make_tensor<bool>(make_shape(size<2>(tBsB))); // Jiawei: Do we really need this?
+    Tensor tBpB = make_tensor<bool>(make_shape(size<2>(tBsB)));
 
     // Set predicates for k bounds
     if (!Is_even_K) { // Jiawei: For us, is_even_k always is true
@@ -192,9 +192,9 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     // Jiawei: copy K from gmem to smem
     flash::copy<Is_even_MN, Is_even_K>(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block), tKsK, tKVcKV, tKVpKV,
                                        binfo.actual_seqlen_k - n_block * kBlockN);
-    // Jiawei: copy Bias from gmem to smem
+    // // Jiawei: copy Bias from gmem to smem
     flash::copy<Is_even_MN, Is_even_K>(gmem_tiled_copy_QKV, tBgB(_, _, _, n_block), tBsB, tBcB, tBpB,
-                                       binfo.actual_seqlen_k - n_block * kBlockN);
+                                       binfo.actual_seqlen_q - m_block * kBlockM);
     cute::cp_async_fence();
 
     clear(acc_o);
@@ -238,6 +238,10 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
             acc_s, tSrQ, tSrK, tSrB, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
             smem_tiled_copy_B, smem_thr_copy_Q, smem_thr_copy_K, smem_thr_copy_B
         );
+        // flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
+        //     acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
+        //     smem_thr_copy_Q, smem_thr_copy_K
+        // );
         if constexpr (Is_softcap){
             flash::apply_softcap(acc_s, params.softcap);
         }
@@ -287,6 +291,10 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
             acc_s, tSrQ, tSrK, tSrB, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
             smem_tiled_copy_B, smem_thr_copy_Q, smem_thr_copy_K, smem_thr_copy_B
         );
+        // flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
+        //     acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
+        //     smem_thr_copy_Q, smem_thr_copy_K
+        // );
         if constexpr (Is_softcap){
             flash::apply_softcap(acc_s, params.softcap);
         }
