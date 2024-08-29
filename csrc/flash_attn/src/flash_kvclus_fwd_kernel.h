@@ -330,11 +330,11 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         //     smem_tiled_copy_B, smem_thr_copy_Q, smem_thr_copy_K, smem_thr_copy_B
         // );
         flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-            acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K,
+            acc_s_, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K,
             smem_thr_copy_Q, smem_thr_copy_K
         );
         if constexpr (Is_softcap){
-            flash::apply_softcap(acc_s, params.softcap);
+            flash::apply_softcap(acc_s_, params.softcap);
         }
 
         mask.template apply_mask<Is_causal, Is_even_MN>(
@@ -351,11 +351,11 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
 
         // TODO: when we have key_padding_mask we'll need to Check_inf
         masking_step == 0
-            ? softmax.template softmax_rescale_o</*Is_first=*/true,  /*Check_inf=*/Is_causal || Is_local>(acc_s, acc_o, params.scale_softmax_log2)
-            : softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_causal || Is_local>(acc_s, acc_o, params.scale_softmax_log2);
+            ? softmax.template softmax_rescale_o</*Is_first=*/true,  /*Check_inf=*/Is_causal || Is_local>(acc_s_, acc_o, params.scale_softmax_log2)
+            : softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_causal || Is_local>(acc_s_, acc_o, params.scale_softmax_log2);
 
         // Convert acc_s from fp32 to fp16/bf16
-        Tensor rP = flash::convert_type<Element>(acc_s);
+        Tensor rP = flash::convert_type<Element>(acc_s_);
         // Reshape rP from (MMA=4, MMA_M, MMA_N) to ((4, 2), MMA_M, MMA_N / 2)
         // if using m16n8k16 or (4, MMA_M, MMA_N) if using m16n8k8.
         Tensor tOrP = make_tensor(rP.data(), flash::convert_layout_acc_Aregs<Kernel_traits::TiledMma>(rP.layout()));
@@ -384,16 +384,12 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV, tKVcKV, tKVpKV);
         cute::cp_async_fence();
 
-        // flash::gemm_kvclus<Element, ElementAccum, /*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-        //     acc_s, tSrQ, tSrK, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
-        //     smem_tiled_copy_B, smem_thr_copy_Q, smem_thr_copy_K, smem_thr_copy_B
-        // );
         flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-            acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
+            acc_s_, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
             smem_thr_copy_Q, smem_thr_copy_K
         );
         if constexpr (Is_softcap){
-            flash::apply_softcap(acc_s, params.softcap);
+            flash::apply_softcap(acc_s_, params.softcap);
         }
 
         flash::cp_async_wait<0>();
@@ -407,12 +403,12 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         }
 
         mask.template apply_mask</*Causal_mask=*/false>(
-            acc_s, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
+            acc_s_, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
         );
 
-        softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_local>(acc_s, acc_o, params.scale_softmax_log2);
+        softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_local>(acc_s_, acc_o, params.scale_softmax_log2);
 
-        Tensor rP = flash::convert_type<Element>(acc_s);
+        Tensor rP = flash::convert_type<Element>(acc_s_);
         // Reshape rP from (MMA=4, MMA_M, MMA_N) to ((4, 2), MMA_M, MMA_N / 2)
         // if using m16n8k16 or (4, MMA_M, MMA_N) if using m16n8k8.
         Tensor tOrP = make_tensor(rP.data(), flash::convert_layout_acc_Aregs<Kernel_traits::TiledMma>(rP.layout()));
