@@ -25,92 +25,6 @@ using namespace cute;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename TiledCopy, typename Engine0, typename Layout0, typename Engine1, typename Layout1,
-          typename Engine2, typename Layout2>
-__forceinline__ __device__ void copyC(TiledCopy tiled_copy, Tensor<Engine0, Layout0> const &S,
-                            Tensor<Engine1, Layout1> &D, Tensor<Engine2, Layout2> const &identity,
-                            const int max_M=0, const int max_N=0) {
-    CUTE_STATIC_ASSERT_V(rank(S) == Int<3>{});
-    CUTE_STATIC_ASSERT_V(rank(D) == Int<3>{});
-    CUTE_STATIC_ASSERT_V(size<0>(S) == size<0>(D));                     // MMA
-    CUTE_STATIC_ASSERT_V(size<1>(S) == size<1>(D));                     // MMA_M
-    CUTE_STATIC_ASSERT_V(size<2>(S) == size<2>(D));                     // MMA_N
-    #pragma unroll
-    for (int m = 0; m < size<1>(S); ++m) {
-        if (get<0>(identity(0, m, 0)) < max_M) {
-            #pragma unroll
-            for (int n = 0; n < size<2>(S); ++n) {
-                if (get<0>(identity(0, m, n)) < max_N) {
-                    cute::copy(tiled_copy, S(_, m, n), D(_, m, n));
-                } else {
-                    cute::clear(D(_, m, n));
-                }
-            }
-        } else {
-            cute::clear(D(_, m, _));
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-template<typename Element, typename ElementAccum,
-         bool A_in_regs=false, bool B_in_regs=false,
-         typename Tensor0, typename Tensor1, typename Tensor2,
-         typename Tensor3, typename Tensor4, typename Tensor5,
-         typename TiledMma,
-         typename TiledCopyA, typename TiledCopyB, typename TiledCopyC,
-         typename ThrCopyA, typename ThrCopyB, typename ThrCopyC>
-__forceinline__ __device__ void gemm_kvclus(
-    Tensor0 &acc, Tensor1 &tCrA, Tensor2 &tCrB, Tensor3 const& tCsA,
-    Tensor4 const& tCsB, Tensor5 const& tCsC, TiledMma tiled_mma,
-    TiledCopyA smem_tiled_copy_A, TiledCopyB smem_tiled_copy_B,
-    TiledCopyC smem_tiled_copy_C, ThrCopyA smem_thr_copy_A,
-    ThrCopyB smem_thr_copy_B, ThrCopyC smem_thr_copy_C) {
-
-    CUTE_STATIC_ASSERT_V(size<1>(tCrA) == size<1>(acc));                     // MMA_M
-    CUTE_STATIC_ASSERT_V(size<1>(tCrB) == size<2>(acc));                     // MMA_N
-    CUTE_STATIC_ASSERT_V(size<2>(tCrA) == size<2>(tCrB));                    // MMA_K
-
-    Tensor tCrA_copy_view = smem_thr_copy_A.retile_D(tCrA);
-    CUTE_STATIC_ASSERT_V(size<1>(tCsA) == size<1>(tCrA_copy_view));          // M
-
-    Tensor tCrB_copy_view = smem_thr_copy_B.retile_D(tCrB);
-    CUTE_STATIC_ASSERT_V(size<1>(tCsB) == size<1>(tCrB_copy_view));          // N
-
-    // if (thread0()) {
-    //     print("acc"); print(acc); print("\n");
-    //     print("tCsC"); print(tCsC); print("\n");
-    // }
-
-    // flash::convert_type<Element>(acc);
-
-    // if (thread0()) {
-    //     print("acc"); print(acc); print("\n");
-    //     print("tCsC"); print(tCsC); print("\n");
-    //     print("tCrC"); print(tCrC_copy_view); print("\n");
-    // }
-
-    // CUTE_STATIC_ASSERT_V(size<1>(tCsC) == size<1>(tCrC_copy_view));          // M
-    // CUTE_STATIC_ASSERT_V(size<2>(tCsC) == size<2>(tCrC_copy_view));          // N
-
-    // cute::copy(smem_tiled_copy_C, tCsC, tCrC_copy_view);
-    if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, _0{}), tCrA_copy_view(_, _, _0{})); }
-    if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, _0{}), tCrB_copy_view(_, _, _0{})); }
-    // flash::convert_type<ElementAccum>(acc);
-
-    #pragma unroll
-    for (int i = 0; i < size<2>(tCrA); ++i) {
-        if (i < size<2>(tCrA) - 1) {
-            if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, i + 1), tCrA_copy_view(_, _, i + 1)); }
-            if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, i + 1), tCrB_copy_view(_, _, i + 1)); }
-        }
-        cute::gemm(tiled_mma, tCrA(_, _, i), tCrB(_, _, i), acc);
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
 template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Return_softmax, typename Params>
 inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const int bidb, const int bidh, const int m_block) {
 
@@ -172,18 +86,6 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     // Jiawei: K block in shared memory. Int<kBlockN>, Int<kHeadDim>
     Tensor sK = make_tensor(sQ.data() + size(sQ), typename Kernel_traits::SmemLayoutKV{});
 
-    // Jiawei: cluster_bias in global mem. bias[bidb, :, :, :]
-    Tensor mB = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.bias_ptr)
-                                             + bidb * params.bias_batch_stride),
-                            make_shape(binfo.actual_seqlen_q, params.h_k, binfo.actual_seqlen_k),
-                            make_stride(params.bias_qlen_stride, params.bias_head_stride, _1{}));
-    // Jiawei: cluster_bias block in global mem. mBias[:, bibh_kv, :], then tile it into [kBlockM, kBlockN] blocks,
-    //         and get the ones at crood [m_block, _]. Shape = [kBlockM, kBlockN, num_kv_blocks]
-    Tensor gB = local_tile(mB(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockM>, Int<kBlockN>>{},
-                           make_coord(m_block, _));  // (kBlockM, kBlockN, nblocksN)
-    // Jiawei: cluster_bias block in shared memory. Int<kBlockM>, Int<kBlockN>
-    Tensor sB = make_tensor(sK.data() + size(sK), typename Kernel_traits::SmemLayoutBias{});
-
     // Jiawei: V in global mem. V[bidb, :, :, :], shape=[kv_len, #head_kv, head_dim]
     Tensor mV = make_tensor(make_gmem_ptr(reinterpret_cast<Element*>(params.v_ptr)
                                           + binfo.k_offset(params.v_batch_stride, params.v_row_stride, bidb)),
@@ -194,11 +96,28 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     Tensor gV = local_tile(mV(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockN>, Int<kHeadDim>>{},
                            make_coord(_, 0));  // (kBlockN, kHeadDim, nblocksN)
     // Jiawei: V block in shared memory. Int<kBlockN>, Int<kHeadDim>
-    Tensor sV = make_tensor(sB.data() + size(sB), typename Kernel_traits::SmemLayoutKV{});
+    Tensor sV = make_tensor(sK.data() + size(sK), typename Kernel_traits::SmemLayoutKV{});
     // Jiawei: Vt block in shared memory. Int<kHeadDim>, Int<kBlockN>
     Tensor sVt = make_tensor(sV.data(), typename Kernel_traits::SmemLayoutVtransposed{});
     // Jiawei: ???
     Tensor sVtNoSwizzle = make_tensor(sV.data().get(), typename Kernel_traits::SmemLayoutVtransposedNoSwizzle{});
+
+    // Jiawei: cluster_bias in global mem. bias[bidb, :, :, :]
+    Tensor mB = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum*>(params.bias_ptr)
+                                             + bidb * params.bias_batch_stride),
+                            make_shape(binfo.actual_seqlen_q, params.h_k, binfo.actual_seqlen_k),
+                            make_stride(params.bias_qlen_stride, params.bias_head_stride, _1{}));
+    // Jiawei: cluster_bias block in global mem. mBias[:, bibh_kv, :], then tile it into [kBlockM, kBlockN] blocks,
+    //         and get the ones at crood [m_block, _]. Shape = [kBlockM, kBlockN, num_kv_blocks]
+    Tensor gB = local_tile(mB(_, bidh / params.h_h_k_ratio, _), Shape<Int<kBlockM>, Int<kBlockN>>{},
+                           make_coord(m_block, _));  // (kBlockM, kBlockN, nblocksN)
+    // Jiawei: cluster_bias block in shared memory. Int<kBlockM>, Int<kBlockN>
+    Tensor sB = make_tensor(
+        reinterpret_cast<ElementAccum*>(
+            smem_ + size(typename Kernel_traits::SmemLayoutQ{}) * sizeof(Element) +
+            size(typename Kernel_traits::SmemLayoutKV{}) * 2 * sizeof(Element)
+        ), 
+        typename Kernel_traits::SmemLayoutBias{});
 
     // TODO: Kernel_traits maybe need some modification to support cluster_bias
     typename Kernel_traits::GmemTiledCopyQKV gmem_tiled_copy_QKV;
@@ -254,14 +173,12 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         for (int k = 0; k < size(tKVpKV); ++k) { tKVpKV(k) = get<1>(tKVcKV(0, 0, k)) < params.d; }
     }
 
-    typename Kernel_traits::GmemTiledCopyO gmem_tiled_copy_B;
+    typename Kernel_traits::GmemTiledCopyAccm gmem_tiled_copy_B;
     auto gmem_thr_copy_B = gmem_tiled_copy_B.get_thread_slice(tidx);
     Tensor tBgB = gmem_thr_copy_B.partition_S(gB);        // (KCPY, KCPY_M, KCPY_N, nblocksN)
     Tensor tBsB = gmem_thr_copy_B.partition_D(sB);        // (KCPY, KCPY_M, KCPY_N)
-    Tensor cB = make_identity_tensor(make_shape(size<0>(sB), size<1>(sB)));
-    Tensor tBcB = gmem_thr_copy_QKV.partition_S(cB);
 
-    auto smem_tiled_copy_B = make_tiled_copy_B(typename Kernel_traits::SmemCopyAtom{}, tiled_mma);
+    auto smem_tiled_copy_B = make_tiled_copy_B(typename Kernel_traits::SmemCopyAtomAccum{}, tiled_mma);
     auto smem_thr_copy_B = smem_tiled_copy_B.get_thread_slice(tidx);
     Tensor tSsB = smem_thr_copy_B.partition_S(sB);
 
@@ -276,9 +193,6 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     flash::copy<Is_even_MN, Is_even_K>(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block), tKsK, tKVcKV, tKVpKV,
                                        binfo.actual_seqlen_k - n_block * kBlockN);
 
-    // flash::copyC(gmem_tiled_copy_B, tBgB(_, _, _, n_block), tBsB, tBcB,
-    //              binfo.actual_seqlen_q - m_block * kBlockM,
-    //              binfo.actual_seqlen_k - n_block * kBlockN);
     cute::copy(gmem_tiled_copy_B, tBgB(_, _, _, n_block), tBsB);
     cute::cp_async_fence();
 
@@ -306,12 +220,10 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         Tensor acc_s = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});  // (MMA=4, MMA_M, MMA_N)
         clear(acc_s);
 
-        Tensor rB = flash::convert_type<Element>(acc_s);
-        Tensor tSrB = smem_thr_copy_B.retile_D(rB);
+        Tensor tSrB = smem_thr_copy_B.retile_D(acc_s);
         cute::copy(smem_tiled_copy_B, tSsB, tSrB);
 
         flash::cp_async_wait<0>();
-        Tensor acc_s_ = flash::convert_type<ElementAccum>(rB);
         __syncthreads();
 
         // Advance gV
@@ -325,20 +237,16 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         }
         cute::cp_async_fence();
 
-        // flash::gemm_kvclus<Element, ElementAccum, /*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-        //     acc_s, tSrQ, tSrK, tSsQ, tSsK, tSsB, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
-        //     smem_tiled_copy_B, smem_thr_copy_Q, smem_thr_copy_K, smem_thr_copy_B
-        // );
         flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-            acc_s_, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K,
+            acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K,
             smem_thr_copy_Q, smem_thr_copy_K
         );
         if constexpr (Is_softcap){
-            flash::apply_softcap(acc_s_, params.softcap);
+            flash::apply_softcap(acc_s, params.softcap);
         }
 
         mask.template apply_mask<Is_causal, Is_even_MN>(
-            acc_s_, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
+            acc_s, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
         );
 
         flash::cp_async_wait<0>();
@@ -351,11 +259,11 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
 
         // TODO: when we have key_padding_mask we'll need to Check_inf
         masking_step == 0
-            ? softmax.template softmax_rescale_o</*Is_first=*/true,  /*Check_inf=*/Is_causal || Is_local>(acc_s_, acc_o, params.scale_softmax_log2)
-            : softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_causal || Is_local>(acc_s_, acc_o, params.scale_softmax_log2);
+            ? softmax.template softmax_rescale_o</*Is_first=*/true,  /*Check_inf=*/Is_causal || Is_local>(acc_s, acc_o, params.scale_softmax_log2)
+            : softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_causal || Is_local>(acc_s, acc_o, params.scale_softmax_log2);
 
         // Convert acc_s from fp32 to fp16/bf16
-        Tensor rP = flash::convert_type<Element>(acc_s_);
+        Tensor rP = flash::convert_type<Element>(acc_s);
         // Reshape rP from (MMA=4, MMA_M, MMA_N) to ((4, 2), MMA_M, MMA_N / 2)
         // if using m16n8k16 or (4, MMA_M, MMA_N) if using m16n8k8.
         Tensor tOrP = make_tensor(rP.data(), flash::convert_layout_acc_Aregs<Kernel_traits::TiledMma>(rP.layout()));
@@ -373,23 +281,21 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         Tensor acc_s = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});  // (MMA=4, MMA_M, MMA_N)
         clear(acc_s);
 
-        Tensor rB = flash::convert_type<Element>(acc_s);
-        Tensor tSrB = smem_thr_copy_B.retile_D(rB);
+        Tensor tSrB = smem_thr_copy_B.retile_D(acc_s);
         cute::copy(smem_tiled_copy_B, tSsB, tSrB);
 
         flash::cp_async_wait<0>();
-        Tensor acc_s_ = flash::convert_type<ElementAccum>(rB);
         __syncthreads();
 
         flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV, tVgV(_, _, _, n_block), tVsV, tKVcKV, tKVpKV);
         cute::cp_async_fence();
 
         flash::gemm</*A_in_regs=*/Kernel_traits::Is_Q_in_regs>(
-            acc_s_, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
+            acc_s, tSrQ, tSrK, tSsQ, tSsK, tiled_mma, smem_tiled_copy_Q, smem_tiled_copy_K, 
             smem_thr_copy_Q, smem_thr_copy_K
         );
         if constexpr (Is_softcap){
-            flash::apply_softcap(acc_s_, params.softcap);
+            flash::apply_softcap(acc_s, params.softcap);
         }
 
         flash::cp_async_wait<0>();
@@ -403,12 +309,12 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         }
 
         mask.template apply_mask</*Causal_mask=*/false>(
-            acc_s_, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
+            acc_s, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
         );
 
-        softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_local>(acc_s_, acc_o, params.scale_softmax_log2);
+        softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_local>(acc_s, acc_o, params.scale_softmax_log2);
 
-        Tensor rP = flash::convert_type<Element>(acc_s_);
+        Tensor rP = flash::convert_type<Element>(acc_s);
         // Reshape rP from (MMA=4, MMA_M, MMA_N) to ((4, 2), MMA_M, MMA_N / 2)
         // if using m16n8k16 or (4, MMA_M, MMA_N) if using m16n8k8.
         Tensor tOrP = make_tensor(rP.data(), flash::convert_layout_acc_Aregs<Kernel_traits::TiledMma>(rP.layout()));

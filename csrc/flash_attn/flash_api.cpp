@@ -1766,7 +1766,7 @@ mha_fwd_kvclus(
     }
     TORCH_CHECK(k.dtype() == q_dtype, "query and key must have the same dtype");
     TORCH_CHECK(v.dtype() == q_dtype, "query and value must have the same dtype");
-    TORCH_CHECK(bias.dtype() == q_dtype, "query and cluster_bias must have the same dtype");
+    TORCH_CHECK(bias.dtype() == torch::kFloat32, "cluster_bias must have the float32 dtype");
 
     CHECK_DEVICE(q); CHECK_DEVICE(k); CHECK_DEVICE(v); CHECK_DEVICE(bias);
 
