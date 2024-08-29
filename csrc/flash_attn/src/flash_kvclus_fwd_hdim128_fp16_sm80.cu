@@ -2,7 +2,7 @@
 // Splitting the different head dimensions to different files to speed up compilation.
 // This file is auto-generated. See "generate_kernels.py"
 
-#include "flash_fwd_launch_template.h"
+#include "flash_kvclus_fwd_launch_template.h"
 
 template<>
 void run_mha_kvclus_fwd_<cutlass::half_t, 128, false>(Flash_kvclus_fwd_params &params, cudaStream_t stream) {

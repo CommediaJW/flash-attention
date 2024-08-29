@@ -1727,7 +1727,7 @@ void run_mha_fwd_kvclus(Flash_kvclus_fwd_params &params, cudaStream_t stream, bo
                 // } else {
                 //     run_mha_fwd_splitkv_dispatch<elem_type, kHeadDim, Is_causal>(params, stream);
                 // }
-                run_mha_kvclus_fwd_<elem_type, kHeadDim, Is_causal>(params, stream);
+                run_mha_kvclus_fwd_<cutlass::half_t, 128, false>(params, stream);
             });
         });
     });
@@ -1768,7 +1768,7 @@ mha_fwd_kvclus(
     TORCH_CHECK(v.dtype() == q_dtype, "query and value must have the same dtype");
     TORCH_CHECK(bias.dtype() == q_dtype, "query and cluster_bias must have the same dtype");
 
-    CHECK_DEVICE(q); CHECK_DEVICE(k); CHECK_DEVICE(v);
+    CHECK_DEVICE(q); CHECK_DEVICE(k); CHECK_DEVICE(v); CHECK_DEVICE(bias);
 
     TORCH_CHECK(q.stride(-1) == 1, "Input tensor must have contiguous last dimension");
     TORCH_CHECK(k.stride(-1) == 1, "Input tensor must have contiguous last dimension");
@@ -1809,19 +1809,24 @@ mha_fwd_kvclus(
     CHECK_SHAPE(q, batch_size, seqlen_q, num_heads, head_size_og);
     CHECK_SHAPE(k, batch_size, seqlen_k, num_heads_k, head_size_og);
     CHECK_SHAPE(v, batch_size, seqlen_k, num_heads_k, head_size_og);
-    CHECK_SHAPE(bias, batch_size, seqlen_q, num_heads_k, head_size_og);
+    CHECK_SHAPE(bias, batch_size, seqlen_q, num_heads_k, seqlen_k);
 
     at::Tensor q_padded, k_padded, v_padded, bias_padded;
     if (head_size_og % 8 != 0) {
         q_padded = torch::nn::functional::pad(q, torch::nn::functional::PadFuncOptions({0, 8 - head_size_og % 8}));
         k_padded = torch::nn::functional::pad(k, torch::nn::functional::PadFuncOptions({0, 8 - head_size_og % 8}));
         v_padded = torch::nn::functional::pad(v, torch::nn::functional::PadFuncOptions({0, 8 - head_size_og % 8}));
-        // Jiawei: Is padding bias needed?
-        bias_padded = torch::nn::functional::pad(v, torch::nn::functional::PadFuncOptions({0, 8 - seqlen_k % 8}));
+        bias_padded = torch::nn::functional::pad(v, torch::nn::functional::PadFuncOptions({0, 32 - seqlen_k % 32}));
     } else {
         q_padded = q;
         k_padded = k;
         v_padded = v;
+        bias_padded = bias;
+    }
+
+    if (seqlen_k % 32 != 0) {
+        bias_padded = torch::nn::functional::pad(v, torch::nn::functional::PadFuncOptions({0, 32 - seqlen_k % 32}));
+    } else {
         bias_padded = bias;
     }
 

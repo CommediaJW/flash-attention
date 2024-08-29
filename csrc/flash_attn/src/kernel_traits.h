@@ -39,16 +39,16 @@ struct Flash_kernel_traits {
 #if defined(__CUDA_ARCH__) &&  __CUDA_ARCH__ >= 750
     using SmemCopyAtom = Copy_Atom<SM75_U32x4_LDSM_N, elem_type>;
     using SmemCopyAtomTransposed = Copy_Atom<SM75_U16x8_LDSM_T, elem_type>;
-    using SmemCopyAtomAccm = Copy_Atom<DefaultCopy, elem_type>;
+    using SmemCopyAtomAccm = Copy_Atom<DefaultCopy, ElementAccum>;
 #else
     using SmemCopyAtom = Copy_Atom<DefaultCopy, elem_type>;
     using SmemCopyAtomTransposed = Copy_Atom<DefaultCopy, elem_type>;
-    using SmemCopyAtomAccm = Copy_Atom<DefaultCopy, elem_type>;
+    using SmemCopyAtomAccm = Copy_Atom<DefaultCopy, ElementAccum>;
 #endif
 };
 
 // If Share_Q_K_smem is true, that forces Is_Q_in_regs to be true
-template<int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_, bool Is_Q_in_regs_=false, bool Share_Q_K_smem_=false, typename elem_type=cutlass::half_t,
+template<int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_, bool Is_Q_in_regs_=false, bool Share_Q_K_smem_=false, typename elem_type=cutlass::half_t, bool Kvclus_fwd_=false,
          typename Base=Flash_kernel_traits<kHeadDim_, kBlockM_, kBlockN_, kNWarps_, elem_type> >
 struct Flash_fwd_kernel_traits : public Base {
     using Element = typename Base::Element;
@@ -61,6 +61,7 @@ struct Flash_fwd_kernel_traits : public Base {
 
     static constexpr bool Share_Q_K_smem = Share_Q_K_smem_; // False
     static constexpr bool Is_Q_in_regs = Is_Q_in_regs_ || Share_Q_K_smem; // False
+    static constexpr bool Kvclus_fwd = Kvclus_fwd_;
 
     // The number of threads.
     static constexpr int kNWarps = kNWarps_; // 4
@@ -77,7 +78,8 @@ struct Flash_fwd_kernel_traits : public Base {
     using TiledMma = TiledMMA<
         typename Base::MMA_Atom_Arch,
         Layout<Shape<Int<kNWarps>,_1,_1>>,  // 4x1x1 or 8x1x1 thread group
-        Tile<Int<16 * kNWarps>, _16, _16>>;
+        Tile<Int<16 * kNWarps>, _16, _16>
+    >;
 
     using SmemLayoutAtomQ = decltype(
         composition(Swizzle<kSwizzle, 3, 3>{},
@@ -97,6 +99,7 @@ struct Flash_fwd_kernel_traits : public Base {
         composition(Swizzle<kSwizzle, 3, 3>{},
                     Layout<Shape<_8, Int<32>>,
                            Stride<Int<32>, _1>>{}));
+
     using SmemLayoutBias = decltype(tile_to_shape(
         SmemLayoutAtomBias{},
         Shape<Int<kBlockM>, Int<kBlockN>>{}));
@@ -118,7 +121,9 @@ struct Flash_fwd_kernel_traits : public Base {
 
     static constexpr int kSmemQSize = size(SmemLayoutQ{}) * sizeof(Element);
     static constexpr int kSmemKVSize = size(SmemLayoutKV{}) * 2 * sizeof(Element);
-    static constexpr int kSmemSize = Share_Q_K_smem ? std::max(kSmemQSize, kSmemKVSize) : kSmemQSize + kSmemKVSize;
+    static constexpr int kSmemBiasSize = size(SmemLayoutBias{}) * sizeof(Element);
+    static constexpr int kSmemSize = Kvclus_fwd ? (kSmemQSize + kSmemKVSize + kSmemBiasSize) :
+        (Share_Q_K_smem ? std::max(kSmemQSize, kSmemKVSize) : kSmemQSize + kSmemKVSize);
 
     static constexpr int kGmemElemsPerLoad = sizeof(cute::uint128_t) / sizeof(Element);
     static_assert(kHeadDim % kGmemElemsPerLoad == 0, "kHeadDim must be a multiple of kGmemElemsPerLoad");
@@ -147,6 +152,10 @@ struct Flash_fwd_kernel_traits : public Base {
         make_tiled_copy(Copy_Atom<DefaultCopy, Element>{},
                         GmemLayoutAtom{},
                         Layout<Shape<_1, _8>>{}));  // Val layout, 8 vals per store
+    using GmemTiledCopyAccm = decltype(
+        make_tiled_copy(Copy_Atom<DefaultCopy, Element>{},
+                        GmemLayoutAtom{},
+                        Layout<Shape<_1, _8>>{}));  // Val layout, 8 vals per read
 
     using GmemLayoutAtomOaccum = std::conditional_t<
         kBlockKSmem == 32,
