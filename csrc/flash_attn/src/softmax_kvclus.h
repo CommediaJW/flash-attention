@@ -34,7 +34,15 @@ __forceinline__ __device__ void apply_bias_scale(
     for (int mi = 0; mi < size<0>(score); ++mi) {
         #pragma unroll
         for (int ni = 0; ni < size<1>(score); ++ni)  {
-            score(mi, ni) = score(mi, ni) * scale + bias(mi, ni);
+            if (score(mi, ni) != -INFINITY && bias(mi, ni) != -INFINITY) {
+                #ifdef UNFUSE_FMA
+                    score(mi, ni) = __fmul_rn(score(mi, ni), scale) + bias(mi, ni);
+                #else
+                    score(mi, ni) = score(mi, ni) * scale + bias(mi, ni);
+                #endif
+            } else {
+                score(mi, ni) = -INFINITY;
+            }
         }
     }
 }
@@ -49,9 +57,10 @@ __forceinline__ __device__ void apply_max(
     CUTE_STATIC_ASSERT_V(size<0>(max) == size<0>(tensor));
     #pragma unroll
     for (int mi = 0; mi < size<0>(tensor); ++mi) {
+        const float row_max = max(mi) == -INFINITY ? 0.f : max(mi);
         #pragma unroll
         for (int ni = 0; ni < size<1>(tensor); ++ni)  {
-            tensor(mi, ni) = exp2f(tensor(mi, ni) - max(mi));
+            tensor(mi, ni) = exp2f(tensor(mi, ni) - row_max);
         }
     }
 }

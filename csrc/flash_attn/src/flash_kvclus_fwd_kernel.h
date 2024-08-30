@@ -233,7 +233,6 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
 
     // PREDICATES
     // Construct identity layout for sQ, sK, sB
-    // Jiawei: identity are tensors without data
     Tensor cQ = make_identity_tensor(make_shape(size<0>(sQ), size<1>(sQ)));            // (BLK_M,BLK_K) -> (blk_m,blk_k)
     Tensor cKV = make_identity_tensor(make_shape(size<0>(sK), size<1>(sK)));           // (BLK_N,BLK_K) -> (blk_n,blk_k)
     Tensor tQcQ = gmem_thr_copy_QKV.partition_S(cQ);       // (ACPY,ACPY_M,ACPY_K) -> (blk_m,blk_k)
@@ -265,6 +264,8 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     Tensor tSrB = flash::convert_type<Element>(
         partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{})
     );
+    clear(tSrB);
+    Tensor tSrB_copy_view = smem_thr_copy_B.retile_D(tSrB);
 
     // Copy Q and K
     // Jiawei: copy Q from gmem to smem
@@ -336,7 +337,6 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
             acc_s, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
         );
 
-        Tensor tSrB_copy_view = smem_thr_copy_B.retile_D(tSrB);
         cute::copy(smem_tiled_copy_B, tSsB, tSrB_copy_view);
         masking_step == 0
             ? softmax.template softmax_rescale_o</*Is_first=*/true,  /*Check_inf=*/Is_causal || Is_local>(acc_s, acc_o, tSrB, params.scale_softmax)
@@ -383,7 +383,6 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
             acc_s, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, kNWarps * 16
         );
 
-        Tensor tSrB_copy_view = smem_thr_copy_B.retile_D(tSrB);
         cute::copy(smem_tiled_copy_B, tSsB, tSrB_copy_view);
         softmax.template softmax_rescale_o</*Is_first=*/false, /*Check_inf=*/Is_local>(acc_s, acc_o, tSrB, params.scale_softmax);
 
