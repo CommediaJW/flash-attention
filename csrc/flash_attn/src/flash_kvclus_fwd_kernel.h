@@ -54,63 +54,6 @@ __forceinline__ __device__ void copyC(TiledCopy tiled_copy, Tensor<Engine0, Layo
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<typename Element, typename ElementAccum,
-         bool A_in_regs=false, bool B_in_regs=false,
-         typename Tensor0, typename Tensor1, typename Tensor2,
-         typename Tensor3, typename Tensor4, typename Tensor5,
-         typename TiledMma,
-         typename TiledCopyA, typename TiledCopyB, typename TiledCopyC,
-         typename ThrCopyA, typename ThrCopyB, typename ThrCopyC>
-__forceinline__ __device__ void gemm_kvclus(
-    Tensor0 &acc, Tensor1 &tCrA, Tensor2 &tCrB, Tensor3 const& tCsA,
-    Tensor4 const& tCsB, Tensor5 const& tCsC, TiledMma tiled_mma,
-    TiledCopyA smem_tiled_copy_A, TiledCopyB smem_tiled_copy_B,
-    TiledCopyC smem_tiled_copy_C, ThrCopyA smem_thr_copy_A,
-    ThrCopyB smem_thr_copy_B, ThrCopyC smem_thr_copy_C) {
-
-    CUTE_STATIC_ASSERT_V(size<1>(tCrA) == size<1>(acc));                     // MMA_M
-    CUTE_STATIC_ASSERT_V(size<1>(tCrB) == size<2>(acc));                     // MMA_N
-    CUTE_STATIC_ASSERT_V(size<2>(tCrA) == size<2>(tCrB));                    // MMA_K
-
-    Tensor tCrA_copy_view = smem_thr_copy_A.retile_D(tCrA);
-    CUTE_STATIC_ASSERT_V(size<1>(tCsA) == size<1>(tCrA_copy_view));          // M
-
-    Tensor tCrB_copy_view = smem_thr_copy_B.retile_D(tCrB);
-    CUTE_STATIC_ASSERT_V(size<1>(tCsB) == size<1>(tCrB_copy_view));          // N
-
-    // if (thread0()) {
-    //     print("acc"); print(acc); print("\n");
-    //     print("tCsC"); print(tCsC); print("\n");
-    // }
-
-    // flash::convert_type<Element>(acc);
-
-    // if (thread0()) {
-    //     print("acc"); print(acc); print("\n");
-    //     print("tCsC"); print(tCsC); print("\n");
-    //     print("tCrC"); print(tCrC_copy_view); print("\n");
-    // }
-
-    // CUTE_STATIC_ASSERT_V(size<1>(tCsC) == size<1>(tCrC_copy_view));          // M
-    // CUTE_STATIC_ASSERT_V(size<2>(tCsC) == size<2>(tCrC_copy_view));          // N
-
-    // cute::copy(smem_tiled_copy_C, tCsC, tCrC_copy_view);
-    if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, _0{}), tCrA_copy_view(_, _, _0{})); }
-    if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, _0{}), tCrB_copy_view(_, _, _0{})); }
-    // flash::convert_type<ElementAccum>(acc);
-
-    #pragma unroll
-    for (int i = 0; i < size<2>(tCrA); ++i) {
-        if (i < size<2>(tCrA) - 1) {
-            if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, i + 1), tCrA_copy_view(_, _, i + 1)); }
-            if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, i + 1), tCrB_copy_view(_, _, i + 1)); }
-        }
-        cute::gemm(tiled_mma, tCrA(_, _, i), tCrB(_, _, i), acc);
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
 template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Return_softmax, typename Params>
 inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const int bidb, const int bidh, const int m_block) {
 
@@ -277,9 +220,8 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
     // Jiawei: copy K block from gmem to smem
     flash::copy<Is_even_MN, Is_even_K>(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block), tKsK, tKVcKV, tKVpKV,
                                        binfo.actual_seqlen_k - n_block * kBlockN);
-
-    // Jiawei: copy B block from gmem to smem
-    cute::copy(gmem_tiled_copy_B, tBgB(_, _, _, n_block), tBsB);
+    flash::copyC(gmem_tiled_copy_B, tBgB(_, _, _, n_block), tBsB, tBcB, binfo.actual_seqlen_q - m_block * kBlockM,
+        binfo.actual_seqlen_k - n_block * kBlockN);
     cute::cp_async_fence();
 
     // Jiawei: thread MMA block of O on *register*. (MMA, MMA_M, MMA_K), **type=float32**
@@ -346,7 +288,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
         __syncthreads();
         if (n_block > n_block_min) {
             flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block - 1), tKsK, tKVcKV, tKVpKV);
-            cute::copy(gmem_tiled_copy_B, tBgB(_, _, _, n_block - 1), tBsB);
+            flash::copyC(gmem_tiled_copy_B, tBgB(_, _, _, n_block - 1), tBsB, tBcB, binfo.actual_seqlen_q, binfo.actual_seqlen_k);
             cute::cp_async_fence();
         }
 
@@ -392,7 +334,7 @@ inline __device__ void compute_attn_1rowblock_kvclus(const Params &params, const
             flash::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV, tKgK(_, _, _, n_block - 1), tKsK, tKVcKV, tKVpKV);
             // This cp_async_fence needs to be in the if block, otherwise the synchronization
             // isn't right and we get race conditions.
-            cute::copy(gmem_tiled_copy_B, tBgB(_, _, _, n_block - 1), tBsB);
+            flash::copyC(gmem_tiled_copy_B, tBgB(_, _, _, n_block - 1), tBsB, tBcB, binfo.actual_seqlen_q, binfo.actual_seqlen_k);
             cute::cp_async_fence();
         }
 
